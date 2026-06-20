@@ -1,81 +1,98 @@
 # ubuntu-scroll-speed
 
-A small GUI to control mouse wheel scroll speed on Ubuntu (or any X11 desktop)
-via [`imwheel`](https://github.com/somebodyfsf/imwheel). Supports both
-**speeding up** and **slowing down** the scroll wheel from a single slider.
+Control mouse-wheel scroll **speed** on Ubuntu / X11 / Wayland — both **faster
+and slower** — from a single slider.
 
-Adapted from a [2013 script by Nick Norton](http://www.nicknorton.net/) that
-only supported speeding up the wheel.
+Most guides reach for [`imwheel`](https://github.com/somebodyfsf/imwheel), but
+imwheel can only *multiply* wheel clicks: it speeds scrolling up and **cannot
+slow it down** below one notch. libinput/xinput expose no wheel-speed setting
+either. So this tool works one layer lower: a small daemon intercepts the raw
+wheel events with **evdev** and re-emits them through a **uinput** virtual
+pointer, scaled by a factor you choose. Below 100% genuinely slows the wheel;
+above 100% speeds it up.
 
-## What it does
+It scales the high-resolution wheel axes too, and uses a fractional accumulator,
+so slowing down stays smooth (e.g. 50% = one logical notch per two physical
+notches) instead of jerky.
 
-Opens a single zenity slider:
+## How it works
 
 ```
-┌─ Scroll Speed ───────────────────────┐
-│ Mouse wheel speed                    │
-│ slower  ◀──────●──────▶  faster      │
-│  -50          0           +100       │
-│            [ Apply ]                 │
-└──────────────────────────────────────┘
+real wheel  --grab-->  wheel-scale-daemon.py  --scale FACTOR-->  uinput virtual pointer  -->  apps
 ```
 
-- **`0`** — default `imwheel` behaviour (one click per wheel tick).
-- **Positive (`1` … `100`)** — sets the click multiplier in `~/.imwheelrc` so
-  one wheel tick emits N+1 clicks. Useful on hi-res or slow-feeling wheels.
-- **Negative (`-1` … `-50`)** — relaunches `imwheel` with `-D N -U N` so each
-  emitted click takes longer (10 ms per step, up to 500 ms). Effectively
-  throttles the wheel for fine-grained scrolling.
-
-Modifier rules (`Ctrl + wheel`, `Shift + wheel`) are left untouched — the
-script only edits the unmodified `Button4` / `Button5` lines.
+- `wheel-scale-daemon.py` — grabs every wheel-capable pointer, re-emits all
+  events, scaling the wheel axes by `FACTOR` from the config file.
+- `ubuntu-scroll-speed.sh` — a zenity slider (10–400 %) that writes the factor
+  and signals the daemon to reload live.
+- The grab is released automatically if the daemon ever exits, so your pointer
+  keeps working even if something goes wrong — important over a remote KVM.
 
 ## Install
-
-Dependencies:
-
-```sh
-sudo apt install imwheel zenity
-```
-
-Clone and link the script:
 
 ```sh
 git clone https://github.com/kingychiu/ubuntu-scroll-speed.git
 cd ubuntu-scroll-speed
-chmod +x ubuntu-scroll-speed.sh
-sudo ln -s "$PWD/ubuntu-scroll-speed.sh" /usr/local/bin/ubuntu-scroll-speed
+./install.sh
+```
+
+`install.sh` will (with `sudo` where needed):
+
+1. install `python3-evdev`, `zenity`, `libnotify-bin`;
+2. install the daemon to `~/.local/bin` and a **systemd `--user` service**;
+3. add a udev rule so the `input` group may open `/dev/uinput`;
+4. add you to the `input` group (read access to input devices).
+
+If you were just added to the `input` group, **log out and back in** (group
+membership only applies to new sessions), then:
+
+```sh
+systemctl --user start ubuntu-scroll-speed.service
 ```
 
 ## Usage
 
+Run the slider any time to change speed:
+
 ```sh
-ubuntu-scroll-speed
+./ubuntu-scroll-speed.sh
 ```
 
-Drag the slider, hit **Apply**. The chosen position is saved to
-`~/.config/ubuntu-scroll-speed/state` so the dialog re-opens where you left it.
+- **< 100 %** — slower scrolling (e.g. 50 % = half speed)
+- **100 %** — normal
+- **> 100 %** — faster scrolling
 
-To make the setting persist across reboots, add `imwheel -b "4 5"` (or
-`imwheel -b "4 5" -D 200 -U 200` for a slow-scroll setting) to your desktop's
-startup applications.
+The setting is saved to `~/.config/ubuntu-scroll-speed/config` and applied
+immediately to the running daemon.
 
-## How the slider maps
+Bind `ubuntu-scroll-speed.sh` to a keyboard shortcut or add it to your
+launcher for quick access.
 
-| Slider | `imwheel` config                                | Effect                          |
-|-------:|-------------------------------------------------|---------------------------------|
-|  `-50` | `Button4, 1` + `-D 500 -U 500`                  | Very slow, fine-grained scroll  |
-|  `-10` | `Button4, 1` + `-D 100 -U 100`                  | Slightly slowed                 |
-|    `0` | `Button4, 1` (default delay)                    | Normal `imwheel` behaviour      |
-|   `+5` | `Button4, 6`                                    | 6 clicks per tick               |
-| `+100` | `Button4, 101`                                  | Hyper-fast scroll               |
+## Service control
 
-## Files touched
+```sh
+systemctl --user status  ubuntu-scroll-speed.service   # check it's running
+systemctl --user restart ubuntu-scroll-speed.service   # restart
+systemctl --user stop    ubuntu-scroll-speed.service   # disable scaling
+journalctl --user -u ubuntu-scroll-speed.service       # logs
+```
 
-- `~/.imwheelrc` — created if missing, otherwise the two unmodified
-  `Button4` / `Button5` lines are rewritten in place.
-- `~/.config/ubuntu-scroll-speed/state` — persists the last slider value.
+## Uninstall
+
+```sh
+systemctl --user disable --now ubuntu-scroll-speed.service
+rm ~/.local/bin/wheel-scale-daemon.py
+rm ~/.config/systemd/user/ubuntu-scroll-speed.service
+sudo rm /etc/udev/rules.d/99-uinput.rules
+# optional: sudo gpasswd -d "$USER" input
+```
+
+## Requirements
+
+- Linux with evdev/uinput (any modern kernel) — works on both X11 and Wayland.
+- `python3-evdev`, `zenity`, `libnotify-bin` (installed by `install.sh`).
 
 ## License
 
-MIT — see [`LICENSE`](./LICENSE).
+MIT — see [LICENSE](LICENSE). Inspired by older imwheel-based scripts, but
+re-implemented at the evdev layer to support slowing down, which imwheel cannot.

@@ -1,0 +1,12 @@
+[Unit]
+Description=ubuntu-scroll-speed wheel scaling daemon
+Documentation=https://github.com/kingychiu/ubuntu-scroll-speed
+
+[Service]
+# %h is the user's home; install.sh copies the daemon next to a stable path.
+ExecStart=%h/.local/bin/wheel-scale-daemon.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

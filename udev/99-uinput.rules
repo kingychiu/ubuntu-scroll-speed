@@ -1,0 +1,3 @@
+# Let members of the "input" group open /dev/uinput so the wheel-scale daemon
+# can create its virtual pointer without root.
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"

@@ -1,73 +1,53 @@
 #!/usr/bin/env bash
-# ubuntu-scroll-speed — GUI control of mouse wheel scroll speed via imwheel.
-# Bipolar slider: negative = slower (event delay), 0 = normal, positive = faster (click multiplier).
-# Adapted from a 2013 script by Nick Norton (nicknorton.net).
+# ubuntu-scroll-speed — GUI to set mouse wheel scroll speed.
+#
+# Drives the wheel-scale daemon (evdev -> uinput interceptor). The slider is a
+# percentage of normal speed: 50 = half speed (slow), 100 = normal, 300 = triple.
+# Below 100 genuinely slows scrolling — something imwheel cannot do.
 
 set -euo pipefail
 
-IMWHEELRC="$HOME/.imwheelrc"
-STATE_DIR="$HOME/.config/ubuntu-scroll-speed"
-STATE_FILE="$STATE_DIR/state"
+CONFIG_DIR="$HOME/.config/ubuntu-scroll-speed"
+CONFIG="$CONFIG_DIR/config"
+DAEMON_NAME="wheel-scale-daemon.py"
+SERVICE="ubuntu-scroll-speed.service"
 
-for cmd in imwheel zenity; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo "error: '$cmd' is not installed. install with: sudo apt install $cmd" >&2
-        exit 1
-    fi
-done
+command -v zenity >/dev/null 2>&1 || {
+    echo "error: zenity is not installed (sudo apt install zenity)" >&2
+    exit 1
+}
 
-if [ ! -f "$IMWHEELRC" ]; then
-    cat > "$IMWHEELRC" <<'EOF'
-".*"
-None,      Up,   Button4, 1
-None,      Down, Button5, 1
-Control_L, Up,   Control_L|Button4
-Control_L, Down, Control_L|Button5
-Shift_L,   Up,   Shift_L|Button4
-Shift_L,   Down, Shift_L|Button5
-EOF
+mkdir -p "$CONFIG_DIR"
+
+# Read current factor (default 1.0) and convert to a percentage for the slider.
+CURRENT_FACTOR=1.0
+if [ -f "$CONFIG" ]; then
+    val=$(sed -n 's/^FACTOR=//p' "$CONFIG" | tail -n1)
+    [[ "$val" =~ ^[0-9]*\.?[0-9]+$ ]] && CURRENT_FACTOR="$val"
 fi
+CURRENT_PCT=$(awk -v f="$CURRENT_FACTOR" 'BEGIN { printf "%d", f * 100 + 0.5 }')
 
-mkdir -p "$STATE_DIR"
-CURRENT=0
-if [ -f "$STATE_FILE" ]; then
-    read -r CURRENT < "$STATE_FILE" || CURRENT=0
-    [[ "$CURRENT" =~ ^-?[0-9]+$ ]] || CURRENT=0
-fi
-
-NEW=$(zenity --scale \
+NEW_PCT=$(zenity --scale \
     --title="Scroll Speed" \
-    --text="Mouse wheel speed   (-50 = slowest · 0 = normal · 100 = fastest)" \
-    --min-value=-50 \
-    --max-value=100 \
-    --value="$CURRENT" \
-    --step=1 \
-    --ok-label="Apply" \
-    --window-icon=info) || exit 0
+    --text="Mouse wheel speed (% of normal)   ·   below 100 = slower, above 100 = faster" \
+    --min-value=10 \
+    --max-value=400 \
+    --value="$CURRENT_PCT" \
+    --step=5 \
+    --ok-label="Apply") || exit 0
 
-[ -z "$NEW" ] && exit 0
+[ -z "$NEW_PCT" ] && exit 0
 
-# Positive: speed up via click multiplier. Non-positive: slow down via per-event delay.
-if [ "$NEW" -ge 0 ]; then
-    MULT=$((NEW + 1))
-    DELAY=0
+NEW_FACTOR=$(awk -v p="$NEW_PCT" 'BEGIN { printf "%.2f", p / 100 }')
+printf 'FACTOR=%s\n' "$NEW_FACTOR" > "$CONFIG"
+
+# Apply live: tell a running daemon to reload (SIGHUP); otherwise start it.
+if pkill -HUP -f "$DAEMON_NAME" 2>/dev/null; then
+    notify="Scroll speed set to ${NEW_PCT}%."
+elif systemctl --user start "$SERVICE" 2>/dev/null; then
+    notify="Scroll speed set to ${NEW_PCT}% (daemon started)."
 else
-    MULT=1
-    DELAY=$(( -NEW * 10 ))
+    notify="Saved ${NEW_PCT}%, but the daemon isn't running. See README to install the service."
 fi
 
-# Only the "None, ..., Button4, N" / "Button5, N" lines have a comma after the button name,
-# so the Control_L|Button4 / Shift_L|Button4 modifier lines are left untouched.
-sed -i "s/\(Button4, *\).*/\1$MULT/" "$IMWHEELRC"
-sed -i "s/\(Button5, *\).*/\1$MULT/" "$IMWHEELRC"
-
-echo "$NEW" > "$STATE_FILE"
-
-# -D/-U only take effect at process start, so a kill-and-relaunch is required to change delay.
-pkill -x imwheel 2>/dev/null || true
-sleep 0.2
-if [ "$DELAY" -gt 0 ]; then
-    imwheel -b "4 5" -D "$DELAY" -U "$DELAY"
-else
-    imwheel -b "4 5"
-fi
+command -v notify-send >/dev/null 2>&1 && notify-send "Scroll Speed" "$notify" || echo "$notify"
