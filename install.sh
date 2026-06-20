@@ -36,6 +36,14 @@ if ! id -nG "$USER" | tr ' ' '\n' | grep -qx input; then
     NEED_RELOGIN=1
 fi
 
+echo "==> Cleaning up artifacts from the old imwheel version"
+# Earlier releases drove imwheel and left these behind; the daemon doesn't use them.
+pkill -x imwheel 2>/dev/null || true
+rm -f "$HOME/.config/ubuntu-scroll-speed/state"
+if [ -f "$HOME/.imwheelrc" ] && grep -q 'Button4, *[0-9]' "$HOME/.imwheelrc" 2>/dev/null; then
+    echo "    note: found ~/.imwheelrc — remove it if you only used it for scroll speed"
+fi
+
 echo "==> Enabling the service"
 systemctl --user daemon-reload
 systemctl --user enable "$SERVICE"

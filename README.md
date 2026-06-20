@@ -87,6 +87,16 @@ sudo rm /etc/udev/rules.d/99-uinput.rules
 # optional: sudo gpasswd -d "$USER" input
 ```
 
+## Migrating from the old imwheel version
+
+Early versions of this tool drove `imwheel`. The daemon replaces it entirely —
+`install.sh` stops any running `imwheel` and removes the stale state file. If you
+only used `imwheel` for scroll speed, you can delete its config too:
+
+```sh
+rm -f ~/.imwheelrc
+```
+
 ## Requirements
 
 - Linux with evdev/uinput (any modern kernel) — works on both X11 and Wayland.
